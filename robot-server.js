@@ -18,6 +18,8 @@ var http = require('http');
 var history = [ ];
 // list of currently connected clients (users)
 var clients = [ ];
+var remotes = [ ];
+var robots = [ ];
 
 /**
  * Helper function for escaping input strings
@@ -26,11 +28,6 @@ function htmlEntities(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
                       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-// Array with some colors
-var colors = [ 'red', 'green', 'blue', 'magenta', 'purple', 'plum', 'orange' ];
-// ... in random order
-colors.sort(function(a,b) { return Math.random() > 0.5; } );
 
 /**
  * HTTP server
@@ -63,7 +60,8 @@ wsServer.on('request', function(request) {
     // we need to know client index to remove them on 'close' event
     var index = clients.push(connection) - 1;
     var userName = false;
-    var userColor = false;
+    var userType = false;
+    var typeIndex = false;
 
     console.log((new Date()) + ' Connection accepted.');
 
@@ -76,44 +74,75 @@ wsServer.on('request', function(request) {
     connection.on('message', function(message) {
         console.log('message.type' + message.type);
         if (message.type === 'utf8') { // accept only text
-            if (userName === false) { // first message sent by user is their name
-                // remember user name
-                userName = htmlEntities(message.utf8Data);
-                // get random color and send it back to the user
-                userColor = colors.shift();
-                connection.sendUTF(JSON.stringify({ type:'color', data: userColor }));
-                console.log((new Date()) + ' User is known as: ' + userName
-                            + ' with ' + userColor + ' color.');
+            let command = JSON.parse(message.utf8Data);
+            let commandId = command.commandId
+            let parameters = command.parameters
 
-            } else { // log and broadcast the message
-                console.log(' Received Message from '
+            console.log(command);
+            console.log('commandId: ' + commandId);
+            
+            switch (commandId) {
+                case 1: // Add User
+                    let user = parameters[0]
+                    userName = user.name
+                    userType = user.type
+                    var obj = {
+                        client: clients[index],
+                        user: user
+                    }
+                    typeIndex = remotes.push(obj) - 1
+                    console.log('Added remote: ' + userName);
+                    break;
+                case 2: // Add Robot
+                    let robot = parameters[0]
+                    userName = robot.name
+                    userType = robot.type
+                    var obj = {
+                        client: clients[index],
+                        user: robot
+                    }
+                    typeIndex = robots.push(obj) - 1
+                    console.log('Added robot: ' + userName);
+                    break;
+                default:
+                    console.log('Unknown command Id: ' + commandId);
+                    console.log(' Received Message from '
                             + userName + ': ' + message.utf8Data);
-                
-                // we want to keep history of all sent messages
-                var obj = {
-                    time: (new Date()).getTime(),
-                    text: message.utf8Data,
-                    author: userName,
-                    color: userColor
-                };
-                // broadcast message to all connected clients
-                var json = JSON.stringify({ type:'message', data: obj });
-                for (var i=0; i < clients.length; i++) {
-                    clients[i].sendUTF(json);
-                }
+
+                    // we want to keep history of all sent messages
+                    var obj = {
+                        time: (new Date()).getTime(),
+                        author: userName,
+                        text: message.utf8Data
+                    };
+                    // broadcast message to all connected clients
+                    var json = JSON.stringify({ type:'command', data: obj });
+
+                    if (userType === "remote") {
+                        for (var i=0; i < robots.length; i++) {
+                            robots[i].client.sendUTF(json);
+                        }
+                    } else {
+                        for (var i=0; i < remotes.length; i++) {
+                            remotes[i].client.sendUTF(json);
+                        }
+                    }
             }
         }
     });
 
     // user disconnected
     connection.on('close', function(connection) {
-        if (userName !== false && userColor !== false) {
+        if (userName !== false) {
             console.log((new Date()) + " Peer "
                 + connection.remoteAddress + " disconnected.");
             // remove user from the list of connected clients
             clients.splice(index, 1);
-            // push back user's color to be reused by another user
-            colors.push(userColor);
+            if (userType === "remote") {
+                remotes.splice(typeIndex, 1);
+            } else {
+                robots.splice(typeIndex, 1);
+            }
         }
     });
 
